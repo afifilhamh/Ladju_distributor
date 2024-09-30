@@ -204,39 +204,33 @@ logging.basicConfig(level=logging.INFO)
 @app.route('/update_status', methods=['POST'])
 def update_status():
     try:
-        # Ambil ID dokumen dan status baru dari form
+        # Ambil ID log dan status baru dari form
         id_log = request.form['id_log']
         new_status = request.form['status']
         
-        # Format doc_id sesuai dengan format di database
-        doc_id = f'LOGDIS{id_log}'
-        
         # Tambahkan logging untuk memastikan data diterima dengan benar
-        logging.info(f"doc_id: {doc_id}, new_status: {new_status}")
+        logging.info(f"id_log: {id_log}, new_status: {new_status}")
         
-        # Dapatkan data dokumen dari tb_ongkos_kirim
-        doc_ref = db.collection('tb_ongkos_kirim').document(doc_id)
+        # Dapatkan data dokumen dari tb_ongkos_kirim berdasarkan id_log
+        doc_ref = db.collection('tb_ongkos_kirim').where('id_log', '==', id_log).get()
         
-        # Pastikan dokumen ada sebelum melakukan update
-        if doc_ref.get().exists:
-            doc_ref.update({
-                'status': new_status
-            })
+        if doc_ref:
+            # Update status untuk semua dokumen yang ditemukan
+            for doc in doc_ref:
+                doc.reference.update({
+                    'status': new_status
+                })
             flash('Status berhasil diperbarui.', 'success')
         else:
-            # Jika dokumen tidak ditemukan, buat dokumen baru
-            logging.warning(f"Dokumen dengan ID {doc_id} tidak ditemukan. Membuat dokumen baru.")
-            db.collection('tb_ongkos_kirim').document(doc_id).set({
-                'status': new_status,
-                'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            })
-            flash('Dokumen baru berhasil dibuat dan status diperbarui.', 'success')
+            logging.warning(f"Dokumen dengan id_log {id_log} tidak ditemukan.")
+            flash('Dokumen tidak ditemukan.', 'danger')
         
         # Jika status adalah "Pesanan Selesai", pindahkan ke tb_histori_pesanan
         if new_status == "Pesanan Selesai":
-            doc_data = doc_ref.get().to_dict()
-            db.collection('tb_histori_pesanan').document(doc_id).set(doc_data)
-            db.collection('tb_ongkos_kirim').document(doc_id).delete()
+            for doc in doc_ref:
+                doc_data = doc.to_dict()
+                db.collection('tb_histori_pesanan').document(doc.id).set(doc_data)
+                doc.reference.delete()
     except Exception as e:
         logging.error(f"Error in update_status: {e}")
         flash('Terjadi kesalahan saat memperbarui status.', 'danger')
