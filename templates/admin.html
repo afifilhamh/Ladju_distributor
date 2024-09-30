@@ -190,7 +190,8 @@
                                     <td>{{ ongkos.status }}</td>
                                     <td>
                                         <form action="{{ url_for('update_status') }}" method="POST">
-                                            <input type="hidden" name="doc_id" value="{{ ongkos.new_id }}">
+                                            <!-- Ambil id_log dari new_id dengan menghapus prefix 'LOGDIS' -->
+                                            <input type="hidden" name="id_log" value="{{ ongkos.new_id[6:] }}">
                                             <select name="status" class="form-control">
                                                 {% for status in status_list %}
                                                 <option value="{{ status }}" {% if status == ongkos.status %}selected{% endif %}>{{ status }}</option>
