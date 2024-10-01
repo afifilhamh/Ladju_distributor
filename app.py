@@ -2,6 +2,7 @@ from flask import Flask, render_template, request, redirect, url_for, jsonify, f
 import firebase_admin
 from firebase_admin import credentials, firestore
 from datetime import datetime
+import logging
 
 # Inisialisasi Firebase Admin SDK
 cred = credentials.Certificate("ladju_distributor.json")
@@ -12,6 +13,9 @@ db = firestore.client()
 
 app = Flask(__name__)
 app.secret_key = 'your_secret_key'  # Kunci rahasia untuk sesi flash
+
+# Konfigurasi logging
+logging.basicConfig(level=logging.INFO)
 
 # Fungsi untuk mengecek validitas login menggunakan Firestore
 def check_login(username, password):
@@ -26,7 +30,9 @@ def check_login(username, password):
 def get_jarak_kota():
     try:
         jarak_docs = db.collection('jarak_kota').stream()
-        return {(doc.id.split('_')[0], doc.id.split('_')[1]): doc.to_dict()['jarak'] for doc in jarak_docs}
+        jarak_kota = {(doc.id.split('_')[0], doc.id.split('_')[1]): doc.to_dict()['jarak'] for doc in jarak_docs}
+        logging.info(f"Jarak kota data: {jarak_kota}")  # Tambahkan logging untuk data jarak kota
+        return jarak_kota
     except Exception as e:
         print(f"Error getting jarak kota: {e}")
         return {}
@@ -74,22 +80,36 @@ def logout():
 def cek_harga():
     try:
         data = request.get_json()  # Menerima data dalam format JSON
+        logging.info(f"Data received: {data}")  # Tambahkan logging untuk data yang diterima
+
         kota_tujuan = data.get('kota_tujuan')
         kota_asal = data.get('kota_asal')
         berat = float(data.get('berat', 0))
         id_log = data.get('id_log')
 
+        # Periksa apakah semua data yang diperlukan ada
+        if not kota_tujuan or not kota_asal or not id_log:
+            logging.error("Missing required data")
+            return {'status': 'error', 'message': 'Data yang diperlukan tidak lengkap.'}, 400
+
         # Perhitungan ongkos kirim berdasarkan jarak dan berat
         JARAK_KOTA = get_jarak_kota()
         LAMA_PENGIRIMAN = get_lama_pengiriman()
 
-        jarak = JARAK_KOTA.get((kota_tujuan.lower(), kota_asal.lower()), 0)
-        ongkos_kirim = (jarak * 500) + (berat * 1000)
+        # Tambahkan logging untuk kunci yang digunakan
+        key1 = (kota_tujuan.lower(), kota_asal.lower())
+        key2 = (kota_asal.lower(), kota_tujuan.lower())
+        logging.info(f"Keys used for JARAK_KOTA: {key1}, {key2}")
 
-        lama_pengiriman = LAMA_PENGIRIMAN.get((kota_tujuan.lower(), kota_asal.lower()), 'Tidak diketahui')
+        jarak = JARAK_KOTA.get(key1, JARAK_KOTA.get(key2, 0))
+        logging.info(f"Jarak calculated: {jarak}")  # Tambahkan logging untuk jarak
 
         if jarak == 0:
+            logging.error("Kombinasi kota tujuan dan kota asal tidak ditemukan.")
             return {'status': 'error', 'message': 'Kombinasi kota tujuan dan kota asal tidak ditemukan.'}, 400
+
+        ongkos_kirim = (jarak * 500) + (berat * 1000)
+        lama_pengiriman = LAMA_PENGIRIMAN.get(key1, LAMA_PENGIRIMAN.get(key2, 'Tidak diketahui'))
 
         # Generate ID berdasarkan id_log
         new_id = f'LOGDISS{id_log}'
@@ -113,7 +133,7 @@ def cek_harga():
             'lama_pengiriman': lama_pengiriman
         })
     except Exception as e:
-        print(f"Error in cek_harga: {e}")
+        logging.error(f"Error in cek_harga: {e}")
         return {'status': 'error', 'message': 'Terjadi kesalahan saat menghitung ongkos kirim.'}, 500
 
 # Route untuk konfirmasi pesanan dan menyimpannya ke 'tb_ongkos_kirim'
@@ -139,19 +159,27 @@ def confirm_pesanan():
             JARAK_KOTA = get_jarak_kota()
             LAMA_PENGIRIMAN = get_lama_pengiriman()
 
-            jarak = JARAK_KOTA.get((kota_tujuan.lower(), kota_asal.lower()), 0)
-            ongkos_kirim = (jarak * 500) + (berat * 1000)
-            lama_pengiriman = LAMA_PENGIRIMAN.get((kota_tujuan.lower(), kota_asal.lower()), 'Tidak diketahui')
+            # Tambahkan logging untuk kunci yang digunakan
+            key1 = (kota_tujuan.lower(), kota_asal.lower())
+            key2 = (kota_asal.lower(), kota_tujuan.lower())
+            logging.info(f"Keys used for JARAK_KOTA: {key1}, {key2}")
+
+            jarak = JARAK_KOTA.get(key1, JARAK_KOTA.get(key2, 0))
+            logging.info(f"Jarak calculated: {jarak}")  # Tambahkan logging untuk jarak
 
             if jarak == 0:
+                logging.error("Kombinasi kota tujuan dan kota asal tidak ditemukan.")
                 return jsonify({'status': 'error', 'message': 'Kombinasi kota tujuan dan kota asal tidak ditemukan.'}), 400
 
-            # Mapping kode kota
-            supplier_codes = {'madura': 'S01', 'solo': 'S02', 'batam': 'S03'}
-            retail_codes = {'ngawi': 'R01', 'denpasar': 'R02', 'surabaya': 'R03'}
+            ongkos_kirim = (jarak * 500) + (berat * 1000)
+            lama_pengiriman = LAMA_PENGIRIMAN.get(key1, LAMA_PENGIRIMAN.get(key2, 'Tidak diketahui'))
 
-            supplier_code = supplier_codes.get(kota_asal.lower(), 'S00')
-            retail_code = retail_codes.get(kota_tujuan.lower(), 'R00')
+            # Mapping kode kota
+            supplier_codes = {'jakarta': 'SUP01', 'bandung': 'SUP02', 'semarang': 'SUP03'}
+            retail_codes = {'surabaya': 'RET01', 'ngawi': 'RET02', 'bali': 'RET03'}
+
+            supplier_code = supplier_codes.get(kota_asal.lower(), 'SUP00')
+            retail_code = retail_codes.get(kota_tujuan.lower(), 'RET00')
 
             # Generate id_resi
             existing_resi = db.collection('tb_ongkos_kirim').where('kota_tujuan', '==', kota_tujuan)\
@@ -192,15 +220,9 @@ def confirm_pesanan():
 
         return jsonify({'status': 'error', 'message': 'Pesanan tidak ditemukan.'}), 404
     except Exception as e:
-        print(f"Error in confirm_pesanan: {e}")
+        logging.error(f"Error in confirm_pesanan: {e}")
         return jsonify({'status': 'error', 'message': 'Terjadi kesalahan saat mengonfirmasi pesanan.'}), 500
-
 # Route untuk memperbarui status ongkos kirim
-import logging
-
-# Konfigurasi logging
-logging.basicConfig(level=logging.INFO)
-
 @app.route('/update_status', methods=['POST'])
 def update_status():
     try:
@@ -229,6 +251,7 @@ def update_status():
         if new_status == "Pesanan Selesai":
             for doc in doc_ref:
                 doc_data = doc.to_dict()
+                doc_data['status'] = new_status  # Pastikan status diperbarui
                 db.collection('tb_histori_pesanan').document(doc.id).set(doc_data)
                 doc.reference.delete()
     except Exception as e:
